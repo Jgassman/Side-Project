@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react'
 import { useI18n } from './i18n.jsx'
+import { useToast } from './components/Toast.jsx'
 import { useHabits } from './lib/storage.js'
-import { computeStats } from './lib/streaks.js'
+import { computeStats, currentStreak } from './lib/streaks.js'
+import { fetchMotivation, fallbackMessage } from './lib/motivation.js'
 import { todayKey } from './lib/date.js'
 import { CATEGORIES } from './lib/categories.js'
 import Header from './components/Header.jsx'
@@ -16,7 +18,8 @@ function createId() {
 }
 
 export default function App() {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
+  const { addToast, updateToast } = useToast()
   const [habits, setHabits] = useHabits()
   const [editing, setEditing] = useState(null) // habit being edited, or null
   const [formOpen, setFormOpen] = useState(false)
@@ -58,9 +61,14 @@ export default function App() {
     closeForm()
   }
 
-  // Toggle today's completion for a habit.
+  // Toggle today's completion for a habit. Marking complete fires an AI
+  // motivational toast (with a graceful local fallback); un-marking is silent.
   function handleToggle(id) {
     const key = todayKey()
+    const habit = habits.find((h) => h.id === id)
+    if (!habit) return
+    const wasDone = Boolean(habit.completions[key])
+
     setHabits((prev) =>
       prev.map((h) => {
         if (h.id !== id) return h
@@ -70,6 +78,27 @@ export default function App() {
         return { ...h, completions }
       }),
     )
+
+    if (!wasDone) {
+      const newStreak = currentStreak({ ...habit.completions, [key]: true })
+      celebrate(habit, newStreak)
+    }
+  }
+
+  // Show a loading toast, then fill it with an AI message (or a local fallback).
+  async function celebrate(habit, streak) {
+    const toastId = addToast({ loading: true })
+    try {
+      const message = await fetchMotivation({
+        habitName: habit.name,
+        currentStreak: streak,
+        category: habit.category,
+        lang,
+      })
+      updateToast(toastId, { message })
+    } catch {
+      updateToast(toastId, { message: fallbackMessage(lang, streak) })
+    }
   }
 
   function handleDelete(habit) {
